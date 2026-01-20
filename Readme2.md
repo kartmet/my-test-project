@@ -1,3 +1,479 @@
+# Kener - Status Page & Monitoring Platform
+
+## Table of Contents
+
+1. [System Overview](#system-overview)
+2. [Prerequisites](#prerequisites)
+3. [Installation Instructions](#installation-instructions)
+4. [Architecture](#architecture)
+5. [Feature Breakdown](#feature-breakdown)
+6. [Deployment Strategy](#deployment-strategy)
+7. [File-Level Deployment Instructions](#file-level-deployment-instructions)
+8. [Database Considerations](#database-considerations)
+9. [Testing & Validation](#testing--validation)
+10. [Performance Considerations](#performance-considerations)
+11. [Troubleshooting](#troubleshooting)
+12. [Quick Reference](#quick-reference)
+13. [Code Locations Reference](#code-locations-reference)
+
+---
+
+## System Overview
+
+**Kener** is a modern, open-source status page application built with Node.js, SvelteKit, and PostgreSQL/MySQL/SQLite. It provides real-time monitoring, uptime tracking, incident management, and hierarchical monitor grouping.
+
+### Core Components
+
+- **Frontend**: SvelteKit with Tailwind CSS
+- **Backend**: Node.js with Express
+- **Database**: PostgreSQL (CloudSQL), MySQL, or SQLite
+- **Monitoring**: Real-time status aggregation and propagation
+
+### Monitor Types
+
+1. **Leaf Monitors**: API, PING, TCP, DNS, SSL, SQL, HEARTBEAT, GAMEDIG
+2. **GROUP Monitors**: Aggregate status from leaf monitors and child GROUPs
+3. **SUPERGROUP Monitors**: Aggregate status from GROUP and SUPERGROUP monitors (multi-layer hierarchy)
+
+---
+
+## Prerequisites
+
+Before installing Kener, ensure you have the following installed on your system:
+
+### Required Prerequisites
+
+- **Node.js**: Version 20.0.0 or above ([Download](https://nodejs.org/en/download/))
+- **npm**: Comes with Node.js ([npm documentation](https://www.npmjs.com/get-npm))
+- **Git**: For cloning the repository ([Download](https://git-scm.com/downloads))
+
+### Optional Prerequisites (for manual installation with SQLite)
+
+- **SQLite3**: Required if using SQLite as the database ([Download](https://www.sqlite.org/download.html))
+- **Build Tools**: Required for native dependencies (Windows: Visual Studio Build Tools, Linux: build-essential, macOS: Xcode Command Line Tools)
+
+### Docker Prerequisites (for Docker installation)
+
+- **Docker**: Version 20.10 or above ([Download](https://docs.docker.com/get-docker/))
+- **Docker Compose**: Version 2.0 or above (comes with Docker Desktop) ([Download](https://docs.docker.com/compose/install/))
+
+### Database Options
+
+Kener supports three database options:
+
+1. **SQLite** (default): No additional setup required, included with SQLite3
+2. **PostgreSQL**: Requires PostgreSQL 12+ installed or Docker container
+3. **MySQL/MariaDB**: Requires MySQL 8+ or MariaDB 11+ installed or Docker container
+
+---
+
+## Installation Instructions
+
+### Option 1: Manual Installation
+
+#### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/rajnandan1/kener.git
+cd kener
+```
+
+#### Step 2: Install Dependencies
+
+```bash
+npm install
+```
+
+#### Step 3: Set Up Environment Variables
+
+Create a `.env` file in the root directory:
+
+```bash
+cp .env.example .env
+```
+
+Edit the `.env` file and configure the following required variables:
+
+```env
+# Required: Secret key for JWT tokens (generate a random string)
+KENER_SECRET_KEY=your_random_secret_key_here
+
+# Required: Origin URL for your application
+ORIGIN=http://localhost:3000
+
+# Optional: Database URL (defaults to SQLite if not specified)
+# For PostgreSQL: DATABASE_URL=postgresql://user:password@localhost:5432/kener_db
+# For MySQL: DATABASE_URL=mysql://user:password@localhost:3306/kener_db
+
+# Optional: Port (defaults to 3000)
+PORT=3000
+
+# Optional: Production mode
+NODE_ENV=production
+```
+
+**Note**: For a complete list of environment variables, see [Environment Variables Documentation](https://kener.ing/docs/environment-vars).
+
+#### Step 4: Create Required Directories
+
+```bash
+mkdir -p database uploads
+```
+
+#### Step 5: Run Database Migrations
+
+```bash
+npm run migrate
+```
+
+#### Step 6: Build the Frontend
+
+```bash
+npm run build
+```
+
+#### Step 7: Start the Application
+
+**Development Mode:**
+```bash
+npm run dev
+```
+
+**Production Mode:**
+```bash
+npm start
+```
+
+**With PM2 (Production Process Manager):**
+```bash
+npm run build
+pm2 start main.js
+```
+
+The application will be available at:
+- **Status Page**: http://localhost:3000
+- **Management Portal**: http://localhost:3000/manage/app/site
+
+#### Step 8: Create Initial User
+
+On first launch, you'll be redirected to the setup page to create your first admin user:
+- Navigate to http://localhost:3000/manage/setup
+- Enter your name, email, and password
+- Email must be valid
+- Password must be at least 8 characters with uppercase, lowercase, and numbers
+
+---
+
+### Option 2: Docker Compose Installation
+
+#### Step 1: Clone the Repository
+
+```bash
+git clone https://github.com/rajnandan1/kener.git
+cd kener
+```
+
+#### Step 2: Create Required Directories
+
+```bash
+mkdir -p uploads
+```
+
+#### Step 3: Configure Environment Variables
+
+Create a `.env` file in the root directory:
+
+```env
+# Required: Secret key for JWT tokens (generate a random string)
+KENER_SECRET_KEY=your_random_secret_key_here
+
+# Required: Origin URL for your application
+ORIGIN=http://localhost:3000
+
+# Optional: Database URL (defaults to SQLite)
+# To use PostgreSQL from docker-compose.yml:
+# DATABASE_URL=postgresql://user:some_super_random_secure_password@postgres:5432/kener_db
+
+# To use MySQL from docker-compose.yml:
+# DATABASE_URL=mysql://user:some_super_random_secure_password@mysql:3306/kener_db
+
+# Optional: Email service (Resend)
+# RESEND_API_KEY=your_resend_api_key
+# RESEND_SENDER_EMAIL=noreply@yourdomain.com
+```
+
+**Important**: Replace `your_random_secret_key_here` with a strong, random string. You can generate one using:
+```bash
+openssl rand -base64 32
+```
+
+#### Step 4: Start with Docker Compose
+
+**Using SQLite (default):**
+```bash
+docker-compose up -d
+```
+
+**Using PostgreSQL:**
+1. Uncomment the `postgres` service and `depends_on` section in `docker-compose.yml`
+2. Set `DATABASE_URL` in `.env` file:
+   ```env
+   DATABASE_URL=postgresql://user:some_super_random_secure_password@postgres:5432/kener_db
+   ```
+3. Start services:
+   ```bash
+   docker-compose up -d
+   ```
+
+**Using MySQL:**
+1. Uncomment the `mysql` service and `depends_on` section in `docker-compose.yml`
+2. Set `DATABASE_URL` in `.env` file:
+   ```env
+   DATABASE_URL=mysql://user:some_super_random_secure_password@mysql:3306/kener_db
+   ```
+3. Start services:
+   ```bash
+   docker-compose up -d
+   ```
+
+#### Step 5: Verify Installation
+
+Check container status:
+```bash
+docker-compose ps
+```
+
+View logs:
+```bash
+docker-compose logs -f kener
+```
+
+The application will be available at:
+- **Status Page**: http://localhost:3000
+- **Management Portal**: http://localhost:3000/manage/app/site
+
+#### Step 6: Create Initial User
+
+On first launch, navigate to http://localhost:3000/manage/setup and create your first admin user.
+
+#### Useful Docker Compose Commands
+
+**Stop the application:**
+```bash
+docker-compose down
+```
+
+**Stop and remove volumes (⚠️ deletes data):**
+```bash
+docker-compose down -v
+```
+
+**View logs:**
+```bash
+docker-compose logs -f
+```
+
+**Restart the application:**
+```bash
+docker-compose restart
+```
+
+**Update to latest version:**
+```bash
+docker-compose pull
+docker-compose up -d
+```
+
+---
+
+### Option 3: Docker Installation (without Docker Compose)
+
+#### Step 1: Create Required Directories
+
+```bash
+mkdir -p database uploads
+```
+
+#### Step 2: Run Docker Container
+
+**Using SQLite:**
+```bash
+docker run -d \
+  --name kener \
+  -p 3000:3000 \
+  -v $(pwd)/database:/app/database \
+  -v $(pwd)/uploads:/app/uploads \
+  -e "KENER_SECRET_KEY=your_random_secret_key_here" \
+  -e "ORIGIN=http://localhost:3000" \
+  rajnandan1/kener:latest
+```
+
+**Using .env file:**
+```bash
+docker run -d \
+  --name kener \
+  -p 3000:3000 \
+  -v $(pwd)/database:/app/database \
+  -v $(pwd)/uploads:/app/uploads \
+  --env-file .env \
+  rajnandan1/kener:latest
+```
+
+**Using PostgreSQL:**
+```bash
+docker run -d \
+  --name kener \
+  -p 3000:3000 \
+  -v $(pwd)/uploads:/app/uploads \
+  -e "KENER_SECRET_KEY=your_random_secret_key_here" \
+  -e "DATABASE_URL=postgresql://user:password@host:5432/database" \
+  -e "ORIGIN=http://localhost:3000" \
+  rajnandan1/kener:latest
+```
+
+#### Step 3: Verify Installation
+
+Check container status:
+```bash
+docker ps | grep kener
+```
+
+View logs:
+```bash
+docker logs -f kener
+```
+
+---
+
+### Post-Installation
+
+After installation, regardless of method:
+
+1. **Access the Management Portal**: Navigate to http://localhost:3000/manage/app/site
+2. **Create Your First User**: If this is your first launch, you'll be prompted to create an admin user
+3. **Configure Your Site**: Set up your site name, description, and branding
+4. **Add Monitors**: Start monitoring your services by adding monitors
+5. **Configure Triggers**: Set up webhooks, Discord, or Slack notifications
+6. **Configure Email Alerts**: Set up email alerts for metric monitoring (SLI, SLO, SLA, KPI, OKR)
+
+---
+
+## Architecture
+
+## Architecture
+
+### Monitor Hierarchy
+
+```
+SUPERGROUP (Business Service)
+  └── SUPERGROUP (Region/Zone)
+      └── SUPERGROUP (Foundation/Platform)
+          └── GROUP (Application Group)
+              └── Leaf Monitors (API, PING, etc.)
+```
+
+### Status Propagation
+
+- **Priority**: DOWN > DEGRADED > UP
+- **Recursive**: Status changes propagate up the hierarchy
+- **Cycle Protection**: Prevents infinite loops (max depth: 10)
+- **Real-time**: Status updates trigger immediate parent recalculation
+
+### Data Flow
+
+1. Leaf monitor reports status → `InsertMonitoringData()`
+2. Status queued → `ProcessGroupUpdate()` triggered
+3. Parent monitors recalculate → `calculateAggregatedStatus()`
+4. Status propagated recursively → `ProcessGroupUpdate()` (recursive)
+5. Database updated → `monitoring_data` table
+
+---
+
+## Feature Breakdown
+
+### ✅ Feature 1: SUPERGROUP Multi-Layer Support
+
+**Status**: ✅ **DEPLOYED IN PRODUCTION**
+
+**Description**: Enables hierarchical monitor grouping with unlimited nesting depth (safety limit: 10 levels).
+
+**Key Capabilities**:
+- SUPERGROUP monitors can contain GROUP and SUPERGROUP children
+- Recursive status propagation with cycle protection
+- UI validation prevents self-selection and invalid hierarchies
+- Backward compatible with existing GROUP monitors
+
+**Files Modified**:
+- `src/lib/components/manage/monitorsAdd.svelte` (Lines 197-211)
+- `src/lib/components/manage/monitorSheet.svelte` (Lines 330-343, 352-401)
+- `src/lib/server/controllers/controller.js` (Lines 794-892, 921-968)
+- `src/lib/server/services/superGroupCall.js` (Service implementation)
+
+**Database**: No schema changes required (uses existing `monitor_type` and `type_data` fields)
+
+**Dependencies**: None (standalone feature)
+
+---
+
+### ✅ Feature 2: Custom Tooltip Message
+
+**Status**: ✅ **DEPLOYED IN PRODUCTION**
+
+**Description**: User-defined tooltip messages displayed on heatmap hover (optional, max 2000 chars).
+
+**Key Capabilities**:
+- Overrides default tooltip (date + status)
+- Character limit: 2000 (enforced in UI and backend)
+- Works for all monitor types
+- Backward compatible (empty = default behavior)
+
+**Files Modified**:
+- `migrations/20260115100000_add_custom_tooltip_and_link_fields.js` (NEW)
+- `src/lib/server/controllers/controller.js` (Lines 203-248, uses `monitorValidators.js`)
+- `src/lib/server/controllers/monitorValidators.js` (NEW - shared validation)
+- `src/lib/server/db/dbimpl.js` (Lines 439, 488)
+- `src/lib/components/manage/monitorSheet.svelte` (Lines 143-152, 770-806)
+- `src/lib/components/manage/monitorsAdd.svelte` (Line 95)
+- `src/lib/components/monitor.svelte` (Lines 407-413)
+
+**Database**: 
+- Migration: `20260115100000_add_custom_tooltip_and_link_fields.js`
+- Field: `customtooltip_message TEXT NULL` (consistent naming across all files)
+
+**Dependencies**: None (standalone feature)
+
+---
+
+### ✅ Feature 3: Custom Monitor Link
+
+**Status**: ✅ **DEPLOYED IN PRODUCTION**
+
+**Description**: Custom click-through URLs with timeline parameters (optional, http/https only).
+
+**Key Capabilities**:
+- Overrides default daily data modal
+- URL parameters: `start_time`, `end_time`, `clicked_time`
+- Smart time handling (rounds down by 1 minute, prevents future time errors)
+- Opens in new tab with security flags (`noopener,noreferrer`)
+- URL validation (http/https only, prevents XSS)
+
+**Files Modified**:
+- `migrations/20260115100000_add_custom_tooltip_and_link_fields.js` (NEW)
+- `src/lib/server/controllers/controller.js` (Lines 203-248, uses `monitorValidators.js`)
+- `src/lib/server/controllers/monitorValidators.js` (NEW - shared validation)
+- `src/lib/server/db/dbimpl.js` (Lines 440, 489)
+- `src/lib/components/manage/monitorSheet.svelte` (Lines 154-166, 770-806)
+- `src/lib/components/manage/monitorsAdd.svelte` (Line 96)
+- `src/lib/components/monitor.svelte` (Lines 192-228)
+
+**Database**: 
+- Migration: `20260115100000_add_custom_tooltip_and_link_fields.js`
+- Field: `custommonitor_link TEXT NULL` (consistent naming across all files)
+
+**Dependencies**: None (standalone feature)
+
+---
+
 ### 🚧 Feature 4: SLI (Service Level Indicator)
 
 **Status**: 🚧 **CODE COMPLETE, READY FOR DEPLOYMENT**
@@ -1026,9 +1502,9 @@
 
 ---
 
-### ✅ Feature 16: Metric Alert Creation UI Enhancement
+### 🚧 Feature 16: Metric Alert Creation UI Enhancement
 
-**Status**: ✅ **DEPLOYED IN PRODUCTION**
+**Status**: 🚧 **CODE COMPLETE, READY FOR DEPLOYMENT**
 
 **Description**: Centralized UI in the Alerts section for creating and managing metric email alerts (SLI, SLO, SLA, KPI, OKR) instead of configuring them in the monitor form.
 
@@ -1152,3 +1628,785 @@
      - Provides success/error feedback
    - **Files**: `src/lib/components/manage/metricAlertForm.svelte` (API integration)
    - **Justification**: Enables seamless integration with existing monitor management system
+
+**Files Modified**:
+- `src/routes/(manage)/manage/(app)/app/alerts/+page.svelte` (NEW - added New Alert button and modal integration)
+- `src/lib/components/manage/metricAlertForm.svelte` (NEW - metric alert creation form)
+
+**Files Removed/Changed**:
+- Removed metric alert configuration UI from `src/lib/components/manage/monitorSheet.svelte` (alert configuration moved to alerts section)
+
+**Database**: No schema changes (uses existing alert config fields in `monitors` table)
+
+**Dependencies**: 
+- Requires Features 9-13 (Email Alert Features) for alert configuration fields
+- Can be deployed after Phase 7 (SLI Alerts) or together with alert phases
+
+**Deployment Order**: Phase 14 (can be deployed with Phase 7-11 or after alert phases are deployed)
+
+**User Experience Impact**:
+- ✅ Centralized alert management in Alerts section
+- ✅ Separation of concerns: monitor configuration vs alert configuration
+- ✅ Easier alert creation workflow
+- ✅ Consistent UI for all metric alert types
+
+---
+
+## Deployment Strategy
+
+### Incremental Rollout Plan
+
+**Phase 1: Core Features** ✅ **DEPLOYED IN PRODUCTION**
+1. ✅ SUPERGROUP Multi-Layer Support
+2. ✅ Custom Tooltip Message (`customtooltip_message`)
+3. ✅ Custom Monitor Link (`custommonitor_link`)
+
+**Phase 2: SLI (Service Level Indicator)** 🚧 **READY FOR DEPLOYMENT**
+4. 🚧 SLI calculation and storage
+   - `degraded_weight`, `sli_value`, `evaluation_period_start/end`
+   - `sli_history` table for historical tracking
+
+**Phase 3: SLO (Service Level Objective)** 🚧 **READY FOR DEPLOYMENT**
+5. 🚧 SLO target configuration
+   - `slo_target` field (90-100% validation)
+
+**Phase 4: SLA (Service Level Agreement)** 🚧 **READY FOR DEPLOYMENT**
+6. 🚧 SLA compliance evaluation
+   - `sla_violated` boolean flag
+   - Automatic evaluation: `sla_violated = (sli_value < slo_target)`
+
+**Phase 5: KPI (Key Performance Indicators)** 🚧 **READY FOR DEPLOYMENT**
+7. 🚧 KPI definitions and calculation
+   - `kpi_definitions` (JSON), `kpi_last_evaluated_at`
+
+**Phase 6: OKR (Objectives and Key Results)** 🚧 **READY FOR DEPLOYMENT**
+8. 🚧 OKR tracking and evaluation
+   - `objective`, `key_results` (JSON), `okr_status`, `okr_last_evaluated_at`
+
+**Phase 7: SLI Email Alerts** 🚧 **READY FOR DEPLOYMENT**
+9. 🚧 SLI email alert system
+   - `sli_alert_config` (JSON), email templates, alert triggering
+
+**Phase 8: SLO Email Alerts** 🚧 **READY FOR DEPLOYMENT**
+10. 🚧 SLO email alert system
+    - `slo_alert_config` (JSON), email templates, alert triggering
+
+**Phase 9: SLA Email Alerts** 🚧 **READY FOR DEPLOYMENT**
+11. 🚧 SLA email alert system
+    - `sla_alert_config` (JSON), email templates, violation alerts
+
+**Phase 10: KPI Email Alerts** 🚧 **READY FOR DEPLOYMENT**
+12. 🚧 KPI email alert system
+    - `kpi_alert_config` (JSON), per-KPI alerts, email templates
+
+**Phase 11: OKR Email Alerts** 🚧 **READY FOR DEPLOYMENT**
+13. 🚧 OKR email alert system
+    - `okr_alert_config` (JSON), status-based alerts, email templates
+
+**Phase 12: Email Templates** 🚧 **READY FOR DEPLOYMENT**
+14. 🚧 Professional HTML email templates
+    - Responsive templates for all 5 alert types
+    - Color-coded headers and clear metric display
+
+**Phase 13: Alert History Tracking** 🚧 **READY FOR DEPLOYMENT**
+15. 🚧 Alert history system
+    - `metric_alert_history` table
+    - Tracks all alert attempts (SENT, FAILED, SKIPPED)
+    - Audit trail for troubleshooting
+
+**Phase 14: Metric Alert Creation UI Enhancement** 🚧 **READY FOR DEPLOYMENT**
+16. 🚧 Centralized alert creation UI
+    - "New Alert" button in Alerts section
+    - Unified modal form for all metric alert types
+    - Separates alert management from monitor configuration
+
+### Merge Strategy
+
+#### Phase 1: Already Deployed ✅
+
+Phase 1 features are already deployed and in production use:
+- ✅ SUPERGROUP Multi-Layer Support
+- ✅ Custom Tooltip Message (`customtooltip_message`)
+- ✅ Custom Monitor Link (`custommonitor_link`)
+
+#### Incremental Merge (For Future Phases)
+
+**Each phase must be deployed separately and tested before moving to the next:**
+
+1. **Phase 2: SLI** → Test → Deploy → Verify
+2. **Phase 3: SLO** → Test → Deploy → Verify (requires SLI)
+3. **Phase 4: SLA** → Test → Deploy → Verify (requires SLI + SLO)
+4. **Phase 5: KPI** → Test → Deploy → Verify (requires SLA)
+5. **Phase 6: OKR** → Test → Deploy → Verify (requires SLI + SLO + SLA + KPI)
+6. **Phase 7: SLI Email Alerts** → Test → Deploy → Verify (requires SLI)
+7. **Phase 8: SLO Email Alerts** → Test → Deploy → Verify (requires SLO + SLI Alerts)
+8. **Phase 9: SLA Email Alerts** → Test → Deploy → Verify (requires SLA + SLI Alerts)
+9. **Phase 10: KPI Email Alerts** → Test → Deploy → Verify (requires KPI + SLI Alerts)
+10. **Phase 11: OKR Email Alerts** → Test → Deploy → Verify (requires OKR + SLI Alerts)
+11. **Phase 12: Email Templates** → Test → Deploy → Verify (can be deployed with Phase 7-11 or separately)
+12. **Phase 13: Alert History Tracking** → Test → Deploy → Verify (can be deployed with Phase 7-11 or separately)
+13. **Phase 14: Metric Alert Creation UI Enhancement** → Test → Deploy → Verify (can be deployed with Phase 7-11 or after alert phases)
+
+**Important**: Each phase builds on previous phases. Do not skip phases. Email alert phases can be deployed after their corresponding metric phases. Email templates and alert history can be deployed together with alert phases or separately. The Metric Alert Creation UI Enhancement (Phase 14) can be deployed with alert phases or after they are deployed.
+
+### Feature Flags (Optional)
+
+For future features (Phase 2-11), consider feature flags:
+
+```javascript
+// Example feature flag (not implemented)
+const FEATURES = {
+  SLI: process.env.ENABLE_SLI === 'true',
+  SLO: process.env.ENABLE_SLO === 'true',
+  SLA: process.env.ENABLE_SLA === 'true',
+  KPI: process.env.ENABLE_KPI === 'true',
+  OKR: process.env.ENABLE_OKR === 'true',
+  SLI_ALERTS: process.env.ENABLE_SLI_ALERTS === 'true',
+  SLO_ALERTS: process.env.ENABLE_SLO_ALERTS === 'true',
+  SLA_ALERTS: process.env.ENABLE_SLA_ALERTS === 'true',
+  KPI_ALERTS: process.env.ENABLE_KPI_ALERTS === 'true',
+  OKR_ALERTS: process.env.ENABLE_OKR_ALERTS === 'true'
+};
+```
+
+**Current Status**: Phase 1 features are always enabled (no flags needed). Future phases can use feature flags for gradual rollout.
+
+---
+
+## File-Level Deployment Instructions
+
+### Phase 1: Core Features (SUPERGROUP + Custom Tooltip/Link)
+
+#### Step 1: Database Migration
+
+**File**: `migrations/20260115100000_add_custom_tooltip_and_link_fields.js`
+
+**Action**: Run migration
+```bash
+npm run migrate
+```
+
+**Verification**:
+```sql
+-- PostgreSQL/MySQL
+SELECT column_name, data_type, is_nullable 
+FROM information_schema.columns 
+WHERE table_name = 'monitors' 
+AND column_name IN ('customtooltip_message', 'custommonitor_link');
+
+-- SQLite
+.schema monitors
+```
+
+**Rollback** (if needed):
+```bash
+npx knex migrate:rollback
+```
+
+#### Step 2: Backend Code
+
+**Files to Deploy** (in order):
+
+1. **`src/lib/server/controllers/monitorValidators.js`** (NEW)
+   - **Purpose**: Shared validation utilities
+   - **Dependencies**: None
+   - **Impact**: Removes duplicate validation code
+
+2. **`src/lib/server/controllers/controller.js`**
+   - **Changes**: 
+     - Import `monitorValidators.js` (Line 24)
+     - `CreateMonitor()` uses shared validation (Lines 203-248)
+     - `UpdateMonitor()` uses shared validation (Lines 250-299)
+     - `ProcessGroupUpdate()` has cycle protection (Lines 921-968)
+   - **Dependencies**: `monitorValidators.js`
+   - **Impact**: Validation refactored, no behavior change
+
+3. **`src/lib/server/db/dbimpl.js`**
+   - **Changes**:
+     - `insertMonitor()` includes `customtooltip_message`, `custommonitor_link` (Lines 439-440)
+     - `updateMonitor()` includes `customtooltip_message`, `custommonitor_link` (Lines 488-489)
+   - **Dependencies**: None
+   - **Impact**: Database operations support new fields
+
+**Deployment Order**:
+1. Deploy `monitorValidators.js` first
+2. Deploy `controller.js` (depends on `monitorValidators.js`)
+3. Deploy `dbimpl.js` (independent)
+
+#### Step 3: Frontend Code
+
+**Files to Deploy** (in order):
+
+1. **`src/lib/components/manage/monitorsAdd.svelte`**
+   - **Changes**:
+     - Initializes `customtooltip_message: ""`, `custommonitor_link: ""` (Lines 95-96)
+     - `createSuperGroupConfig()` allows GROUP and SUPERGROUP children (Lines 197-211)
+   - **Dependencies**: None
+   - **Impact**: UI supports new fields and SUPERGROUP multi-layer
+
+2. **`src/lib/components/manage/monitorSheet.svelte`**
+   - **Changes**:
+     - Custom tooltip validation (Lines 143-152)
+     - Custom link validation (Lines 154-166)
+     - SUPERGROUP validation allows GROUP/SUPERGROUP children (Lines 330-343, 352-401)
+     - UI fields for customization (Lines 770-806)
+   - **Dependencies**: `monitorsAdd.svelte` (for initialization)
+   - **Impact**: Form validation and UI for new features
+
+3. **`src/lib/components/monitor.svelte`**
+   - **Changes**:
+     - Custom tooltip display (Lines 407-413)
+     - Custom link click handler (Lines 192-228)
+   - **Dependencies**: None
+   - **Impact**: Heatmap displays custom tooltip and handles custom link clicks
+
+**Deployment Order**:
+1. Deploy `monitorsAdd.svelte` first (initialization)
+2. Deploy `monitorSheet.svelte` (depends on initialization)
+3. Deploy `monitor.svelte` (independent)
+
+#### Step 4: Build and Deploy
+
+```bash
+# Build frontend
+npm run build
+
+# Start application (migrations run automatically)
+npm start
+```
+
+---
+
+### Phase 2: SLI (Service Level Indicator)
+
+**Files to Deploy**:
+1. `migrations/20250115120000_add_sla_slo_sli_fields.js` (partial: only `degraded_weight`, `sli_value`, `evaluation_period_start/end` fields)
+2. `migrations/20250115120001_create_sli_history_table.js` (SLI history table)
+3. `src/lib/server/slaUtils.js` (`calculateSLI()`, `calculateSLIFromData()` functions)
+4. `src/lib/server/controllers/controller.js` (SLI calculation integration)
+
+**Dependencies**: Requires Phase 1 (SUPERGROUP) for aggregated SLI calculation
+
+**Deployment Order**:
+1. Run migrations (partial fields from `20250115120000_add_sla_slo_sli_fields.js`)
+2. Deploy backend code (SLI calculation functions)
+3. Test SLI calculation for leaf monitors and GROUP/SUPERGROUP monitors
+4. Verify `sli_history` table is populated correctly
+5. Deploy frontend (if UI changes exist)
+
+**Note**: The migration `20250115120000_add_sla_slo_sli_fields.js` adds all SLI/SLO/SLA fields. For Phase 2, only use the SLI-related fields. SLO and SLA fields will be used in later phases.
+
+---
+
+### Phase 3: SLO (Service Level Objective)
+
+**Files to Deploy**:
+1. `migrations/20250115120000_add_sla_slo_sli_fields.js` (partial: only `slo_target` field - already exists from Phase 2)
+2. `src/lib/server/slaUtils.js` (`validateSLOTarget()` function)
+3. `src/lib/components/manage/monitorSheet.svelte` (SLO target validation in UI)
+4. `src/lib/server/db/dbimpl.js` (SLO field in insertMonitor/updateMonitor)
+
+**Dependencies**: Requires Phase 2 (SLI) for future SLA evaluation
+
+**Deployment Order**:
+1. Verify `slo_target` field exists (from Phase 2 migration)
+2. Deploy backend validation code
+3. Deploy frontend UI for SLO target configuration
+4. Test SLO target validation (90-100% range)
+5. Verify SLO targets can be set for monitors
+
+**Note**: The `slo_target` field was added in Phase 2 migration but not used. Phase 3 enables SLO target configuration.
+
+---
+
+### Phase 4: SLA (Service Level Agreement)
+
+**Files to Deploy**:
+1. `migrations/20250115120000_add_sla_slo_sli_fields.js` (partial: only `sla_violated` field and indexes - already exists from Phase 2)
+2. `src/lib/server/slaUtils.js` (`evaluateSLA()` function)
+3. `src/lib/server/controllers/controller.js` (Lines 868-875 - SLA evaluation on status change)
+4. `src/lib/server/db/dbimpl.js` (SLA field in insertMonitor/updateMonitor)
+
+**Dependencies**: Requires Phase 2 (SLI) and Phase 3 (SLO) - cannot deploy without both
+
+**Deployment Order**:
+1. Verify `sla_violated` field and indexes exist (from Phase 2 migration)
+2. Deploy backend SLA evaluation code
+3. Test SLA evaluation: `sla_violated = (sli_value < slo_target)`
+4. Verify SLA violations are detected and stored
+5. Deploy frontend (if UI changes exist for SLA display)
+
+**Note**: The `sla_violated` field and indexes were added in Phase 2 migration but not used. Phase 4 enables SLA compliance evaluation.
+
+---
+
+### Phase 5: KPI (Key Performance Indicators)
+
+**Files to Deploy**:
+1. `migrations/20250115120003_add_kpi_fields.js`
+2. `src/lib/server/kpiUtils.js` (Utility functions: `validateKPI()`, `evaluateKPIs()`, `getMonitoringDataForKPI()`)
+3. `src/lib/server/controllers/controller.js` (KPI evaluation integration)
+4. `src/lib/server/db/dbimpl.js` (KPI fields in insertMonitor/updateMonitor)
+
+**Dependencies**: Requires Phase 4 (SLA) for SLA violation count KPI
+
+**Deployment Order**:
+1. Run migration: `20250115120003_add_kpi_fields.js`
+2. Deploy backend KPI calculation code
+3. Test KPI calculation for different types (MTTR, MTBF, ERROR_RATE, UPTIME, etc.)
+4. Verify KPI definitions can be stored and evaluated
+5. Deploy frontend (if UI changes exist for KPI configuration)
+
+---
+
+### Phase 6: OKR (Objectives and Key Results)
+
+**Files to Deploy**:
+1. `migrations/20250115120002_add_okr_fields.js`
+2. `src/lib/server/okrUtils.js` (Utility functions: `validateOKR()`, `evaluateOKR()`, `evaluateKeyResult()`, `getCurrentMetricsForOKR()`)
+3. `src/lib/server/controllers/controller.js` (OKR evaluation integration)
+4. `src/lib/server/db/dbimpl.js` (OKR fields in insertMonitor/updateMonitor)
+
+**Dependencies**: Requires Phase 2 (SLI), Phase 3 (SLO), Phase 4 (SLA), and Phase 5 (KPI) - cannot deploy without all previous phases
+
+**Deployment Order**:
+1. Run migration: `20250115120002_add_okr_fields.js`
+2. Deploy backend OKR evaluation code
+3. Test OKR evaluation with Key Results referencing SLI, SLO, SLA, KPI
+4. Verify OKR status calculation (ON_TRACK, AT_RISK, OFF_TRACK, NOT_SET)
+5. Deploy frontend (if UI changes exist for OKR configuration)
+
+---
+
+## Database Considerations
+
+### CloudSQL PostgreSQL Performance
+
+#### Indexes
+
+**Existing Indexes** (from migrations):
+- `idx_monitors_sla_violated` - Fast SLA violation queries
+- `idx_monitors_type_sla` - Monitor type + SLA status queries
+- `idx_monitors_okr_status` - OKR status queries
+- `idx_monitors_type_okr` - Monitor type + OKR status queries
+
+**Recommended Additional Indexes** (if needed):
+```sql
+-- For custom tooltip/link queries (if filtering by these fields)
+CREATE INDEX idx_monitors_custom_link ON monitors(custommonitor_link) WHERE custommonitor_link IS NOT NULL;
+
+-- For SUPERGROUP hierarchy queries (if needed)
+CREATE INDEX idx_monitors_type ON monitors(monitor_type) WHERE monitor_type IN ('GROUP', 'SUPERGROUP');
+```
+
+#### Query Performance
+
+**Status Propagation**:
+- `ProcessGroupUpdate()` queries all active GROUP/SUPERGROUP monitors
+- **Optimization**: Index on `monitor_type` + `status` (if not exists)
+- **Impact**: Minimal (only runs on status changes, not on every request)
+
+**Custom Fields**:
+- `customtooltip_message` and `custommonitor_link` are nullable
+- **Impact**: No performance impact (only loaded when monitor is fetched)
+
+#### Migration Performance
+
+**Phase 1 Migration** (`20260115100000_add_custom_tooltip_and_link_fields.js`):
+- Adds 2 nullable TEXT columns
+- **Impact**: Minimal (ALTER TABLE is fast for nullable columns)
+- **Downtime**: None (nullable columns can be added online)
+
+**Future Migrations** (Phase 2-3):
+- SLI/SLO/SLA: Adds 6 columns + 1 table
+- KPI: Adds 2 columns
+- OKR: Adds 4 columns
+- **Impact**: Minimal (all nullable/default columns)
+- **Downtime**: None
+
+### Database Backup
+
+**Before Migration**:
+```bash
+# PostgreSQL
+pg_dump -U username -d kener > backup-$(date +%Y%m%d).sql
+
+# MySQL
+mysqldump -u username -p kener > backup-$(date +%Y%m%d).sql
+
+# SQLite
+cp database/kener.sqlite.db database/kener.sqlite.db.backup-$(date +%Y%m%d)
+```
+
+**Rollback Plan**:
+- All migrations have `down()` functions
+- Run `npx knex migrate:rollback` to revert
+- Restore backup if needed
+
+---
+
+## Testing & Validation
+
+### Pre-Deployment Checklist
+
+- [ ] Database backup created
+- [ ] Migration tested on staging
+- [ ] Code review completed
+- [ ] All linter errors resolved
+- [ ] No console errors in browser/server logs
+
+### Functional Testing
+
+#### Test 1: SUPERGROUP Multi-Layer
+
+**Steps**:
+1. Create SUPERGROUP monitor "Level 1"
+2. Create SUPERGROUP monitor "Level 2"
+3. Create GROUP monitor "Level 3"
+4. Create leaf monitor (API/PING)
+5. Add hierarchy: Level 1 → Level 2 → Level 3 → Leaf
+6. Set leaf monitor to DOWN
+7. Verify: Status propagates through all levels
+
+**Expected**: All parent monitors show DOWN status
+
+**Validation**:
+- Check `monitoring_data` table for parent statuses
+- Check console logs for `[ProcessGroupUpdate]` messages
+- Verify no infinite loops (check depth in logs)
+
+#### Test 2: Custom Tooltip Message
+
+**Steps**:
+1. Create/edit monitor
+2. Enter custom tooltip: "Test tooltip message"
+3. Save monitor
+4. Navigate to monitor detail page
+5. Hover over heatmap cell
+6. Verify: Custom tooltip displays
+
+**Expected**: Custom tooltip shows instead of default
+
+**Validation**:
+- Check database: `customtooltip_message` field saved
+- Check UI: Tooltip displays custom message
+- Test edge cases: Empty, null, > 2000 chars (should fail validation)
+
+#### Test 3: Custom Monitor Link
+
+**Steps**:
+1. Create/edit monitor
+2. Enter custom URL: "https://example.com/dashboard"
+3. Save monitor
+4. Navigate to monitor detail page
+5. Click heatmap cell
+6. Verify: URL opens with `start_time`, `end_time`, `clicked_time` parameters
+
+**Expected**: Custom URL opens in new tab with time parameters
+
+**Validation**:
+- Check database: `custommonitor_link` field saved
+- Check URL: Parameters present and valid
+- Test edge cases: Invalid URL (should fail validation), empty (should use default)
+
+#### Test 4: Cycle Prevention
+
+**Steps**:
+1. Create SUPERGROUP monitor "Test SuperGroup"
+2. Edit "Test SuperGroup"
+3. Verify: "Test SuperGroup" does NOT appear in selection list
+4. Try to add via API (if possible)
+5. Verify: Backend cycle protection prevents infinite loops
+
+**Expected**: Cannot select itself, cycle protection works
+
+#### Test 5: Backward Compatibility
+
+**Steps**:
+1. Check existing GROUP monitors
+2. Verify: All existing monitors still work
+3. Verify: Existing monitors have NULL for new fields
+4. Verify: Default tooltip and click behavior work
+
+**Expected**: Existing monitors unaffected
+
+### Performance Testing
+
+#### Database Query Performance
+
+**Test**: Status propagation with 100 monitors
+```bash
+# Monitor query time
+EXPLAIN ANALYZE SELECT * FROM monitors WHERE monitor_type IN ('GROUP', 'SUPERGROUP') AND status = 'ACTIVE';
+```
+
+**Expected**: Query time < 100ms (with index)
+
+#### UI Rendering Performance
+
+**Test**: Heatmap with 365 days of data
+- **Expected**: Render time < 500ms
+- **Tooltip**: Hover latency < 50ms
+
+#### Status Propagation Performance
+
+**Test**: Update leaf monitor in deep hierarchy (10 levels)
+- **Expected**: Propagation completes in < 2 seconds
+- **Logs**: Check for depth warnings (should not exceed 10)
+
+### Regression Testing
+
+**Critical Paths** (must not break):
+1. ✅ GROUP monitor creation/update/delete
+2. ✅ Leaf monitor creation/update/delete
+3. ✅ Status aggregation for GROUP monitors
+4. ✅ Heatmap rendering
+5. ✅ Daily data modal (when custom link not set)
+6. ✅ Default tooltip (when custom tooltip not set)
+
+**Test Matrix**:
+
+| Feature | Create | Update | Delete | Status Propagation | UI Display |
+|---------|--------|--------|--------|-------------------|------------|
+| Leaf Monitor | ✅ | ✅ | ✅ | ✅ | ✅ |
+| GROUP Monitor | ✅ | ✅ | ✅ | ✅ | ✅ |
+| SUPERGROUP Monitor | ✅ | ✅ | ✅ | ✅ | ✅ |
+| Custom Tooltip | ✅ | ✅ | N/A | N/A | ✅ |
+| Custom Link | ✅ | ✅ | N/A | N/A | ✅ |
+
+---
+
+## Performance Considerations
+
+### Database Queries
+
+**Optimization**:
+- Indexes on `monitor_type`, `status` for GROUP/SUPERGROUP queries
+- Indexes on `sla_violated`, `okr_status` for metrics queries
+- No N+1 queries introduced
+
+**Monitoring**:
+- Track query execution time in logs
+- Monitor database connection pool usage
+- Alert on slow queries (> 1 second)
+
+### Frontend Performance
+
+**Optimization**:
+- Tooltip rendering: Debounced hover (50ms)
+- Heatmap rendering: Virtual scrolling for large datasets
+- Custom link: URL parsing cached
+
+**Monitoring**:
+- Track page load time
+- Monitor JavaScript errors
+- Alert on slow renders (> 1 second)
+
+### Status Propagation
+
+**Optimization**:
+- Only propagates when status actually changes
+- Cycle protection prevents infinite loops
+- Depth limit (10) prevents excessive recursion
+
+**Monitoring**:
+- Track propagation depth in logs
+- Alert on depth > 8 (approaching limit)
+- Monitor propagation time
+
+---
+
+## Troubleshooting
+
+### Common Issues
+
+#### Issue 1: Migration Fails
+
+**Symptoms**: Error when running `npm run migrate`
+
+**Solutions**:
+1. Check database connection
+2. Verify migration file syntax
+3. Check for conflicting migrations
+4. Review error message for specific issue
+
+**Rollback**:
+```bash
+npx knex migrate:rollback
+```
+
+#### Issue 2: SUPERGROUP Not Showing Children
+
+**Symptoms**: SUPERGROUP created but no status aggregation
+
+**Solutions**:
+1. Check console logs for `[ProcessGroupUpdate]` messages
+2. Verify child monitors are ACTIVE
+3. Verify child monitors have status in `monitoring_data`
+4. Check for ignored leaf monitors in logs (SUPERGROUP ignores leaf monitors)
+
+#### Issue 3: Custom Tooltip Not Showing
+
+**Symptoms**: Custom tooltip message saved but not displaying
+
+**Solutions**:
+1. Verify field is saved in database
+2. Check browser console for errors
+3. Verify monitor object includes `customtooltip_message`
+4. Check tooltip display code (line 407-413 in monitor.svelte)
+
+#### Issue 4: Custom Link Not Opening
+
+**Symptoms**: Custom link saved but click doesn't open URL
+
+**Solutions**:
+1. Verify URL is valid (http:// or https://)
+2. Check browser console for errors
+3. Verify `dailyDataGetter()` function is called
+4. Check URL parsing logic (line 192-228 in monitor.svelte)
+
+#### Issue 5: Validation Errors
+
+**Symptoms**: Form validation fails unexpectedly
+
+**Solutions**:
+1. Check `monitorValidators.js` for validation logic
+2. Verify frontend and backend validation match
+3. Check error messages in console
+4. Test with valid/invalid inputs
+
+### Debugging
+
+**Enable Debug Logging**:
+```javascript
+// In controller.js, add:
+console.log('[DEBUG] Monitor data:', monitorData);
+console.log('[DEBUG] Validation result:', validationResult);
+```
+
+**Check Database**:
+```sql
+-- Verify custom fields
+SELECT id, name, customtooltip_message, custommonitor_link 
+FROM monitors 
+WHERE customtooltip_message IS NOT NULL OR custommonitor_link IS NOT NULL;
+
+-- Verify SUPERGROUP hierarchy
+SELECT tag, name, monitor_type, type_data 
+FROM monitors 
+WHERE monitor_type IN ('GROUP', 'SUPERGROUP');
+```
+
+---
+
+## Code Quality & Refactoring
+
+### Duplicate Code Removed
+
+**Before**: Duplicate validation logic in `CreateMonitor()` and `UpdateMonitor()`
+
+**After**: Shared validation in `src/lib/server/controllers/monitorValidators.js`
+
+**Impact**: 
+- ✅ Reduced code duplication
+- ✅ Consistent validation logic
+- ✅ Easier maintenance
+
+### Error Handling
+
+**Centralized**: All validation errors use consistent format
+- Format: `IllegalArgumentException: <message>`
+- Database errors: `Database access exception: <message>`
+
+**Logging**: Comprehensive console logging for debugging
+- `[CreateMonitor]`, `[UpdateMonitor]`, `[ProcessGroupUpdate]`
+- Error messages include context (monitor tag, field name, etc.)
+
+---
+
+## Acceptance Criteria
+
+### Phase 1 (Current)
+
+- ✅ All new features validated and stable
+- ✅ No regression in existing monitors
+- ✅ Performance remains equal or improved
+- ✅ Duplicate code removed
+- ✅ Clear, developer-friendly README
+- ✅ Feature rollout can be done incrementally
+- ✅ Any developer can deploy by following README only
+
+### Future Phases (2-3)
+
+- 🚧 SLI/SLO/SLA metrics functional
+- 🚧 KPI calculations accurate
+- 🚧 OKR evaluation working
+- 🚧 All features documented
+- 🚧 Performance acceptable
+- 🚧 No breaking changes
+
+---
+
+## Support & Documentation
+
+### Single Source of Truth
+
+**All documentation is now consolidated in this README.md file**, including:
+- Feature implementation details
+- Deployment instructions
+- Testing checklists
+- Troubleshooting guides
+- Code location references
+
+### Code Comments
+
+All new code includes:
+- **Justification**: Why the code exists
+- **Error Handling**: How errors are handled
+- **Dependencies**: What the code depends on
+
+---
+
+## Version History
+
+- **v3.2.19** (Deployed): Phase 1 features (SUPERGROUP, Custom Tooltip/Link)
+- **v3.3.0** (Planned): Phase 2 features (SLI)
+- **v3.3.1** (Planned): Phase 3 features (SLO)
+- **v3.3.2** (Planned): Phase 4 features (SLA)
+- **v3.4.0** (Planned): Phase 5 features (KPI)
+- **v3.5.0** (Planned): Phase 6 features (OKR)
+- **v3.5.1** (Planned): Phase 7 features (SLI Email Alerts)
+- **v3.5.2** (Planned): Phase 8 features (SLO Email Alerts)
+- **v3.5.3** (Planned): Phase 9 features (SLA Email Alerts)
+- **v3.6.0** (Planned): Phase 10 features (KPI Email Alerts)
+- **v3.6.1** (Planned): Phase 11 features (OKR Email Alerts)
+- **v3.6.2** (Planned): Phase 12 features (Email Templates)
+- **v3.6.3** (Planned): Phase 13 features (Alert History Tracking)
+- **v3.6.4** (Planned): Phase 14 features (Metric Alert Creation UI Enhancement)
+
+---
+
+**Last Updated**: 2025-01-15  
+**Status**: ✅ Phase 1 Deployed in Production  
+**Next Steps**: 
+1. Deploy Phase 2 (SLI), then Phase 3 (SLO), then Phase 4 (SLA), followed by Phase 5 (KPI) and Phase 6 (OKR)
+2. After metric features are deployed, deploy email alert phases:
+   - Phase 7 (SLI Alerts) after Phase 2
+   - Phase 8 (SLO Alerts) after Phase 3
+   - Phase 9 (SLA Alerts) after Phase 4
+   - Phase 10 (KPI Alerts) after Phase 5
+   - Phase 11 (OKR Alerts) after Phase 6
+3. Deploy supporting features:
+   - Phase 12 (Email Templates) - can be deployed with Phase 7-11 or separately
+   - Phase 13 (Alert History Tracking) - can be deployed with Phase 7-11 or separately
+4. Deploy Phase 14 (Metric Alert Creation UI Enhancement) - can be deployed with Phase 7-11 or after alert phases are deployed
+
+---
+
+## Field Naming Convention
+
+**Custom Fields** (consistent across all files):
+- `customtooltip_message` - Custom tooltip message (no underscores, lowercase)
+- `custommonitor_link` - Custom monitor link (no underscores, lowercase)
+
+**All database fields, code variables, and UI bindings use these exact names for consistency.**
