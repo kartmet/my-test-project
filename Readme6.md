@@ -27,20 +27,137 @@
 
 ### 1. `src/lib/components/monitor.svelte`
 
-- **Reactive `_90Day`:** Replaced `let _90Day = monitor.pageData._90Day` with `$: _90Day = monitor.pageData._90Day` so the grid always uses the latest `pageData` when `monitor` changes. The cell can show UP/DOWN/DEGRADED again after MONITORTIMEOUT.
-- **Fallbacks for class usage:** Use `bar.cssClass || 'api-nodata'` and `bar.textClass || 'api-nodata'` everywhere the bar/tooltip classes are applied:
-  - Main grid bar: `bg-{bar.cssClass || 'api-nodata'}`.
-  - Tooltip text color: `text-{bar.textClass || 'api-nodata'}`.
-  - Day modal squares: `bg-{bar.cssClass || 'api-nodata'}` and `text-{bar.cssClass || 'api-nodata'}` for the dot.
-  - If `cssClass`/`textClass` is ever missing, the cell shows gray (NO_DATA) instead of an invalid class and white.
+#### 1a. Reactive `_90Day` (lines 37–41)
+
+**BEFORE:**
+
+```37:39:src/lib/components/monitor.svelte
+  let _0Day = {};
+  let _90Day = monitor.pageData._90Day;
+  let uptime90Day = monitor.pageData.uptime90Day;
+```
+
+**AFTER:**
+
+```37:41:src/lib/components/monitor.svelte
+  let _0Day = {};
+  // Reactive so grid updates when monitor/pageData changes (e.g. after navigation or refetch).
+  // Without this, a cell that once showed MONITORTIMEOUT (or invalid cssClass) would never recover.
+  $: _90Day = monitor.pageData._90Day;
+  let uptime90Day = monitor.pageData.uptime90Day;
+```
+
+#### 1b. Main grid bar – fallback for `cssClass` (lines 374–377)
+
+**BEFORE:**
+
+```373:376:src/lib/components/monitor.svelte
+              <div
+                class="oneline-in h-[30px] bg-{bar.cssClass} mx-auto rounded-{monitor.pageData.barRoundness.toUpperCase() ==
+                'SHARP'
+                  ? 'none'
+```
+
+**AFTER:**
+
+```374:377:src/lib/components/monitor.svelte
+                class="oneline-in h-[30px] bg-{bar.cssClass || 'api-nodata'} mx-auto rounded-{monitor.pageData.barRoundness.toUpperCase() ==
+                'SHARP'
+                  ? 'none'
+                  : 'sm'}"
+```
+
+#### 1c. Tooltip text color – fallback for `textClass` (line 392)
+
+**BEFORE:**
+
+```391:391:src/lib/components/monitor.svelte
+                <div class="text-{bar.textClass} text-xs font-semibold">
+```
+
+**AFTER:**
+
+```392:392:src/lib/components/monitor.svelte
+                <div class="text-{bar.textClass || 'api-nodata'} text-xs font-semibold">
+```
+
+#### 1d. Day modal – square and dot fallbacks (lines 455, 464)
+
+**BEFORE:**
+
+```454:455:src/lib/components/monitor.svelte
+                  <div data-index={bar.index} class="bg-{bar.cssClass} today-sq m-[1px] h-[10px] w-[10px]"></div>
+```
+
+```461:461:src/lib/components/monitor.svelte
+                        <span class="text-{bar.cssClass}"> ● </span>
+```
+
+**AFTER:**
+
+```455:455:src/lib/components/monitor.svelte
+                  <div data-index={bar.index} class="bg-{bar.cssClass || 'api-nodata'} today-sq m-[1px] h-[10px] w-[10px]"></div>
+```
+
+```464:464:src/lib/components/monitor.svelte
+                        <span class="text-{bar.cssClass || 'api-nodata'}"> ● </span>
+```
+
+---
 
 ### 2. `src/lib/server/page.js`
 
-- **Defensive `cssClass`:** Set `_90Day[ts].cssClass = cssClass ?? StatusObj.NO_DATA` so the server never sends `undefined`. The client always receives a valid class name.
+#### Defensive `cssClass` (lines 147–149)
+
+**BEFORE:**
+
+```146:148:src/lib/server/page.js
+    _90Day[ts].timestamp = ts;
+    _90Day[ts].cssClass = cssClass;
+    _90Day[ts].summaryStatus = l(lang, summaryTime(summaryStatus), {
+```
+
+**AFTER:**
+
+```147:150:src/lib/server/page.js
+    _90Day[ts].timestamp = ts;
+    // Ensure we never send undefined (avoids "bg-undefined" and persistent broken grid state)
+    _90Day[ts].cssClass = cssClass ?? StatusObj.NO_DATA;
+    _90Day[ts].summaryStatus = l(lang, summaryTime(summaryStatus), {
+```
+
+---
 
 ### 3. `src/routes/(kener)/+layout.svelte`
 
-- **Theme variable for MONITORTIMEOUT:** Added `--monitortimeout-color: {data.site.colors?.MONITORTIMEOUT ?? '#000080'}` to the `<main>` style so the navy color is set (and themeable) like the other status colors.
+#### Theme variable for MONITORTIMEOUT (lines 107–115)
+
+**BEFORE:**
+
+```107:113:src/routes/(kener)/+layout.svelte
+  style="
+	--font-family: {data.site.font.family};
+	--bg-custom: {data.bgc};
+	--up-color: {data.site.colors.UP};
+	--down-color: {data.site.colors.DOWN};
+	--degraded-color: {data.site.colors.DEGRADED};
+	--maintenance-color: {data.site.colors.MAINTENANCE};
+	"
+```
+
+**AFTER:**
+
+```107:115:src/routes/(kener)/+layout.svelte
+  style="
+	--font-family: {data.site.font.family};
+	--bg-custom: {data.bgc};
+	--up-color: {data.site.colors.UP};
+	--down-color: {data.site.colors.DOWN};
+	--degraded-color: {data.site.colors.DEGRADED};
+	--maintenance-color: {data.site.colors.MAINTENANCE};
+	--monitortimeout-color: {data.site.colors?.MONITORTIMEOUT ?? '#000080'};
+	"
+```
 
 ## Result
 
