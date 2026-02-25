@@ -1,102 +1,93 @@
-# MONITORTIMEOUT Propagation – Root Cause, Recommendations, and Fixes
+# MONITORTIMEOUT Showing as DOWN on Heatmap – Root Cause and Fixes
 
-This document analyzes why MONITORTIMEOUT may not appear on the heatmap grid (leaf, group, supergroup) and provides minimal code fixes. **MONITORTIMEOUT is a normal status returned by the user-defined eval**; the application must not hardcode timeout logic or override the eval’s decision.
-
----
-
-## 1. Clarification: Eval and MONITORTIMEOUT
-
-- The **eval function is user-defined**. It decides monitor status from the API payload/response.
-- **MONITORTIMEOUT** is just another valid status (like UP, DOWN, DEGRADED). The app must:
-  - Accept MONITORTIMEOUT when eval returns it.
-  - Persist it in the same table/column as other statuses.
-  - Propagate it to groups and supergroups.
-  - Render it (e.g. navy) in the heatmap.
-  - **Not** reinterpret it as DOWN, DEGRADED, or UNKNOWN.
-  - **Not** use hardcoded HTTP status codes or timeout logic to force MONITORTIMEOUT.
-
-The platform must support MONITORTIMEOUT end-to-end whenever eval returns it.
+This document explains why the heatmap grid shows **DOWN** instead of **MONITORTIMEOUT** for leaf monitors, groups, and supergroups, and gives minimal code changes to fix it. **MONITORTIMEOUT is a normal status from the user-defined eval**; the application must not override it or map it to DOWN.
 
 ---
 
-## 2. Root Cause Analysis
+## 1. Root Cause: Why the Grid Shows DOWN Instead of MONITORTIMEOUT
 
-### A. Why the heatmap might not show navy for MONITORTIMEOUT
+### Primary cause: interpolation fills the day with the previous period’s status (e.g. DOWN)
 
-Possible causes:
+The heatmap’s 90‑day data is built in **GetDataGroupByDayAlternative**:
 
-1. **Grouping bug in `GetDataGroupByDayAlternative`**  
-   The reducer uses `group[row.status]++`. In JavaScript, if `row.status` is missing from the initial group (e.g. typo or legacy data with different casing), or if `row.status` is `undefined`, then `group[row.status]` is `undefined` and `undefined++` becomes **NaN**. The return uses `group.MONITORTIMEOUT || 0`, so **NaN || 0 === 0**. So the day’s MONITORTIMEOUT count would be lost and the heatmap would not show navy for that day.
+1. **Raw data** from `db.getDataGroupByDayAlternative(monitor_tag, start, end)` – only rows that exist in `monitoring_data` (e.g. 29 minutes of MONITORTIMEOUT at the end of today).
+2. **InterpolateData(rawData, start, anchorStatus, end)** – fills **every minute** from `start` to `end`.  
+   `anchorStatus` is **GetLastStatusBefore(monitor_tag, start)** = last status **before** the range start (e.g. last status from **yesterday**).
+3. So from **midnight today** up to the first real data point, **every minute is filled with that previous status**. If yesterday ended in **DOWN**, that’s hundreds of minutes of **DOWN**.
+4. The reducer then does **group[row.status]++** for every row (real + interpolated). So **group.DOWN** is large and **group.MONITORTIMEOUT** is 29.
+5. In **page.js**, the day’s worst status is chosen by a sequence of `if` checks; **DOWN** is applied **after** MONITORTIMEOUT, so **DOWN overwrites** and the cell shows DOWN (red).
 
-2. **Priority order**  
-   In two places MONITORTIMEOUT is evaluated **after** DEGRADED. Required order is DOWN > MONITORTIMEOUT > DEGRADED > MAINTENANCE > UP. If both DEGRADED and MONITORTIMEOUT appear, the code currently picks DEGRADED; it should pick MONITORTIMEOUT.
+So the application is **not** overwriting the eval result in the DB; it is **reusing the previous period’s status for missing minutes**, which pollutes the day’s counts and makes the heatmap show DOWN instead of MONITORTIMEOUT.
 
-3. **Persistence**  
-   If eval returns MONITORTIMEOUT, the current code path accepts it and persists it (no override). So persistence is correct as long as eval actually returns `"MONITORTIMEOUT"` and the status column is used consistently.
+**Fix:** When building day-grouped data for the heatmap, treat “no data” as **NO_DATA**, not as the previous period’s status. Use **NO_DATA** as the initial status in **InterpolateData** for this path so only **real** data (e.g. MONITORTIMEOUT) and explicit NO_DATA drive the day’s status.
 
-### B. Database: where status is stored
+### Secondary: grouping can drop MONITORTIMEOUT (NaN)
+
+**group[row.status]++** is used in the same reducer. If `row.status` is missing, wrong case, or undefined, **group[row.status]** is undefined and **undefined++** is **NaN**. The return uses **group.MONITORTIMEOUT || 0**, so **NaN || 0 === 0** and MONITORTIMEOUT can disappear for that day. A defensive increment avoids that.
+
+### Priority order
+
+In **GetLatestStatusActiveAll** and **calculateAggregatedStatus**, MONITORTIMEOUT is currently evaluated **after** DEGRADED. Required order is **DOWN > MONITORTIMEOUT > DEGRADED > …** so MONITORTIMEOUT is not hidden by DEGRADED when both appear.
+
+---
+
+## 2. Database and Eval (No Override)
 
 | Item | Detail |
 |------|--------|
 | **Table** | `monitoring_data` |
-| **Column** | `status` (`table.text("status")` in `migrations/20250111153517_init.js` line 10) |
-| **Type** | Free text (no enum). Any string, including `"MONITORTIMEOUT"`, is valid. |
-| **Write path** | `db.insertMonitoringData(data)` in `dbimpl.js` (lines 17–22). Inserts/merges `status` as provided. |
-| **Read path** | `db.getDataGroupByDayAlternative(monitor_tag, start, end)` returns rows with `timestamp`, `status`, `latency`. |
+| **Column** | `status` (text, no enum) |
+| **Persistence** | Whatever is passed to `insertMonitoringData` is stored. Eval returns MONITORTIMEOUT → we persist MONITORTIMEOUT. |
+| **Eval** | apiCall.js accepts MONITORTIMEOUT in the allowed list and sets `toWrite.status = evalResp.status`. No mapping of MONITORTIMEOUT to DOWN. |
 
-So MONITORTIMEOUT is persisted correctly whenever the caller (e.g. cron-minute after eval) passes `status: "MONITORTIMEOUT"`. No schema change is required.
-
-### C. Eval logic (no overrides)
-
-- **apiCall.js (lines 127–153):** If eval returns `status: "MONITORTIMEOUT"`, it is in the allowed list `[UP, DOWN, DEGRADED, MONITORTIMEOUT]`, so it is **not** replaced with DOWN. `toWrite.status = evalResp.status` keeps MONITORTIMEOUT.
-- There is **no** hardcoded timeout logic that forces status to MONITORTIMEOUT or DOWN based on HTTP status or `timeoutError`. Timeout behavior is left to the user-defined eval.
-- Conclusion: **Eval → MONITORTIMEOUT handling is correct.** The app treats MONITORTIMEOUT like any other status and does not override it.
-
-### D. Where the app can fail to support MONITORTIMEOUT
-
-1. **Controller – day grouping**  
-   `group[row.status]++` can produce NaN for unknown or undefined `row.status`, so `group.MONITORTIMEOUT || 0` can be 0 even when there are MONITORTIMEOUT rows. Fix: use a defensive increment so counts are never NaN and MONITORTIMEOUT is always counted when present.
-
-2. **Controller – priority**  
-   In `GetLatestStatusActiveAll` and `calculateAggregatedStatus`, MONITORTIMEOUT is currently after DEGRADED. So when both exist, the result is DEGRADED instead of MONITORTIMEOUT. Fix: evaluate MONITORTIMEOUT **before** DEGRADED so MONITORTIMEOUT takes precedence.
+So MONITORTIMEOUT is stored correctly when eval returns it. The “DOWN” on the heatmap comes from **interpolation and day aggregation**, not from overwriting the stored status.
 
 ---
 
-## 3. Status Flow Summary
-
-| Layer | MONITORTIMEOUT support |
-|-------|-------------------------|
-| Eval (user-defined) | Returns `status: "MONITORTIMEOUT"` when user logic says so. |
-| apiCall.js | Accepts MONITORTIMEOUT; does not override. |
-| Persistence (monitoring_data) | `status` column (text); stores whatever is passed. |
-| GetDataGroupByDayAlternative | Groups by `row.status`; **risk:** `group[row.status]++` → NaN if key missing/undefined. |
-| calculateAggregatedStatus | Has MONITORTIMEOUT in statusCounts; **issue:** priority DEGRADED before MONITORTIMEOUT. |
-| GetLatestStatusActiveAll | **Issue:** priority DEGRADED before MONITORTIMEOUT. |
-| page.js (90-day heatmap) | Uses `dayData.MONITORTIMEOUT` and `StatusObj.MONITORTIMEOUT`; correct when dayData has count. |
-| Frontend (monitor.svelte) | Uses `bar.cssClass` from pageData._90Day; navy class exists. |
-
-So the only required fixes are in the controller: safe grouping and priority order.
-
----
-
-## 4. Recommended Fixes (minimal)
+## 3. Recommended Fixes (Summary)
 
 | # | File | Change |
 |---|------|--------|
-| 1 | `src/lib/server/controllers/controller.js` | In `GetDataGroupByDayAlternative`, replace `group[row.status]++` with a defensive increment so MONITORTIMEOUT (and any other known status) is never lost to NaN. |
-| 2 | `src/lib/server/controllers/controller.js` | In `GetLatestStatusActiveAll`, check MONITORTIMEOUT **before** DEGRADED (priority: DOWN > MONITORTIMEOUT > DEGRADED > UP). |
-| 3 | `src/lib/server/controllers/controller.js` | In `calculateAggregatedStatus`, check MONITORTIMEOUT **before** DEGRADED (priority: DOWN > MONITORTIMEOUT > DEGRADED > MAINTENANCE > UP > NO_DATA). |
-
-**No change** to apiCall.js timeout logic: eval alone determines MONITORTIMEOUT; the app must not force it.
+| 1 | **controller.js** | In **GetDataGroupByDayAlternative**, call **InterpolateData** with initial status **NO_DATA** instead of **anchorStatus**, so missing minutes are NO_DATA and do not inject DOWN (or any other previous status) into the day. |
+| 2 | **controller.js** | In the same reducer, use a **defensive increment** for **group[row.status]** so MONITORTIMEOUT (and other statuses) are never lost to NaN. |
+| 3 | **controller.js** | In **GetLatestStatusActiveAll**, check **MONITORTIMEOUT** before **DEGRADED** (priority: DOWN > MONITORTIMEOUT > DEGRADED > UP). |
+| 4 | **controller.js** | In **calculateAggregatedStatus**, check **MONITORTIMEOUT** before **DEGRADED** (priority: DOWN > MONITORTIMEOUT > DEGRADED > MAINTENANCE > UP > NO_DATA). |
 
 ---
 
-## 5. Fix 1 – GetDataGroupByDayAlternative: defensive group increment
+## 4. Fix 1 – Use NO_DATA for interpolated minutes (main fix)
 
 **File:** `src/lib/server/controllers/controller.js`  
-**Location:** Reducer inside `GetDataGroupByDayAlternative` (around lines 1032–1036).
+**Location:** GetDataGroupByDayAlternative, around lines 1012–1015.
 
-**Reason:** `group[row.status]++` is undefined when `row.status` is not a key of `group`, and `undefined++` is NaN. Then `group.MONITORTIMEOUT || 0` is 0. Using a defensive increment ensures MONITORTIMEOUT (and other statuses) are counted correctly even with missing or undefined status, and avoids NaN.
+**Reason:** InterpolateData currently fills every minute from start to end with **anchorStatus** (last status before the range). That can be DOWN and dominates the day’s counts, so the heatmap shows DOWN instead of MONITORTIMEOUT. Using **NO_DATA** for the initial status makes “no data” minutes count as NO_DATA only, so the day’s color is driven by real data (e.g. MONITORTIMEOUT).
+
+### BEFORE (lines 1012–1015)
+
+```javascript
+  let rawData = await db.getDataGroupByDayAlternative(monitor_tag, start, end);
+  let anchorStatus = await GetLastStatusBefore(monitor_tag, start);
+  rawData = InterpolateData(rawData, start, anchorStatus, end);
+```
+
+### AFTER
+
+```javascript
+  let rawData = await db.getDataGroupByDayAlternative(monitor_tag, start, end);
+  // Use NO_DATA for interpolated minutes so the day's status is not polluted by the previous period's status (e.g. DOWN)
+  rawData = InterpolateData(rawData, start, NO_DATA, end);
+```
+
+**Justification:** Only the argument passed to InterpolateData changes. InterpolateData still fills one row per minute; those without real data now get status **NO_DATA** instead of the previous period’s status. Days with only MONITORTIMEOUT (and NO_DATA for the rest) will then show MONITORTIMEOUT on the heatmap. Existing behavior for days that have real DOWN/DEGRADED/UP is unchanged.
+
+---
+
+## 5. Fix 2 – Defensive group increment
+
+**File:** `src/lib/server/controllers/controller.js`  
+**Location:** Reducer inside GetDataGroupByDayAlternative, around lines 1032–1036.
+
+**Reason:** **group[row.status]++** can produce NaN when `row.status` is undefined or not a key of the initial group, so **group.MONITORTIMEOUT || 0** becomes 0 and MONITORTIMEOUT is lost. A defensive increment and handling of unknown/empty status avoid NaN and keep MONITORTIMEOUT (and others) correct.
 
 ### BEFORE (lines 1032–1036)
 
@@ -123,19 +114,16 @@ So the only required fixes are in the controller: safe grouping and priority ord
     return acc;
 ```
 
-**Justification:**  
-- `(group[statusKey] ?? 0) + 1` never produces NaN and counts MONITORTIMEOUT (and any other status) even if that key were ever missing from the initial object.  
-- Unknown or empty status is treated as NO_DATA so it does not create NaN and the rest of the pipeline stays consistent.  
-- Only the grouping logic is changed; initial group shape and return shape are unchanged.
+**Justification:** Ensures no NaN, counts MONITORTIMEOUT and other known statuses even when the key was missing from the initial object, and maps null/empty status to NO_DATA so the rest of the pipeline stays consistent.
 
 ---
 
-## 6. Fix 2 – GetLatestStatusActiveAll: priority DOWN > MONITORTIMEOUT > DEGRADED > UP
+## 6. Fix 3 – GetLatestStatusActiveAll priority
 
 **File:** `src/lib/server/controllers/controller.js`  
-**Location:** Loop in `GetLatestStatusActiveAll` (around lines 456–473).
+**Location:** GetLatestStatusActiveAll loop, around lines 458–470.
 
-**Reason:** MONITORTIMEOUT must override DEGRADED and UP. Currently MONITORTIMEOUT is checked after DEGRADED, so a mix of DEGRADED and MONITORTIMEOUT yields DEGRADED.
+**Reason:** MONITORTIMEOUT must override DEGRADED and UP. Currently MONITORTIMEOUT is checked after DEGRADED.
 
 ### BEFORE (lines 458–470)
 
@@ -171,14 +159,14 @@ So the only required fixes are in the controller: safe grouping and priority ord
   }
 ```
 
-**Justification:** Only the order and conditions of the checks change so that MONITORTIMEOUT beats DEGRADED and UP; DOWN still wins. No new statuses; other callers unchanged.
+**Justification:** Only the order and conditions of the checks change so that MONITORTIMEOUT beats DEGRADED and UP; DOWN still wins.
 
 ---
 
-## 7. Fix 3 – calculateAggregatedStatus: priority DOWN > MONITORTIMEOUT > DEGRADED
+## 7. Fix 4 – calculateAggregatedStatus priority
 
 **File:** `src/lib/server/controllers/controller.js`  
-**Location:** Priority chain in `calculateAggregatedStatus` (around lines 579–598).
+**Location:** calculateAggregatedStatus priority chain, around lines 579–598.
 
 **Reason:** For group/supergroup aggregation, when any child has MONITORTIMEOUT (and none DOWN), the parent should be MONITORTIMEOUT. Currently DEGRADED is checked before MONITORTIMEOUT.
 
@@ -220,43 +208,44 @@ So the only required fixes are in the controller: safe grouping and priority ord
   }
 ```
 
-**Justification:** MONITORTIMEOUT is evaluated before DEGRADED so one MONITORTIMEOUT child (with no DOWN) makes the parent MONITORTIMEOUT. All other branches and NO_DATA/UP logic unchanged.
+**Justification:** MONITORTIMEOUT is evaluated before DEGRADED so one MONITORTIMEOUT child (with no DOWN) makes the parent MONITORTIMEOUT. Other branches unchanged.
 
 ---
 
-## 8. What is not changed
+## 8. Optional: DB layer if used later
 
-- **apiCall.js**  
-  No hardcoded timeout handling. Eval alone decides status (including MONITORTIMEOUT). The app already accepts and passes through MONITORTIMEOUT.
+**File:** `src/lib/server/db/dbimpl.js`  
+**getLastStatusBeforeCombined** (lines 167–173) uses a **CASE** that returns only **'DOWN'**, **'DEGRADED'**, or **'UP'**; everything else (including MONITORTIMEOUT) falls into **ELSE 'UP'**. This function is not used in the heatmap path today, but if it is used for status display or aggregation, MONITORTIMEOUT would be shown as UP. For consistency, the CASE could be extended with:
 
-- **Database**  
-  No schema or migration changes. `monitoring_data.status` remains free text.
-
-- **Frontend**  
-  No change. MONITORTIMEOUT is already mapped to navy; heatmap uses `bar.cssClass` from server-built `_90Day`.
-
-- **Eval contract**  
-  No new status values or special cases. MONITORTIMEOUT is supported the same way as UP, DOWN, DEGRADED.
+- **WHEN SUM(CASE WHEN status = 'MONITORTIMEOUT' THEN 1 ELSE 0 END) > 0 THEN 'MONITORTIMEOUT'**  
+  and placed between DOWN and DEGRADED to match priority. This is optional until that code path is used.
 
 ---
 
-## 9. Impact and Validation
+## 9. What is not changed
+
+- **apiCall.js:** No change. Eval’s MONITORTIMEOUT is already accepted and persisted; no timeout overrides.
+- **Database schema:** No change.
+- **Frontend:** No change. MONITORTIMEOUT is already mapped to navy; heatmap uses server-built `_90Day`.
+- **InterpolateData** is still used for the “today” / daily-detail path with the existing anchor (e.g. in **page.js** for todayDataDb). Only the **GetDataGroupByDayAlternative** call uses NO_DATA as the initial status.
+
+---
+
+## 10. Impact and Validation
 
 ### Impact
 
-- **Leaf heatmap:** Day-level MONITORTIMEOUT counts are no longer lost to NaN, so the 90-day strip can show navy when eval has returned MONITORTIMEOUT.
-- **Group/supergroup:** Aggregation and latest-status use DOWN > MONITORTIMEOUT > DEGRADED, so MONITORTIMEOUT appears correctly in summaries and heatmaps when any child is MONITORTIMEOUT (and none DOWN).
-- **Existing behavior:** UP, DOWN, DEGRADED, MAINTENANCE, NO_DATA logic and persistence are unchanged. Only grouping safety and priority order are updated.
+- **Leaf heatmap:** Days with only MONITORTIMEOUT (and NO_DATA for the rest) show navy; days are no longer filled with the previous period’s DOWN.
+- **Group/supergroup:** Same data source and aggregation; MONITORTIMEOUT propagates with the correct priority (DOWN > MONITORTIMEOUT > DEGRADED).
+- **Existing behavior:** Real DOWN/DEGRADED/UP/MAINTENANCE minutes still drive the heatmap; only **interpolated** minutes are now NO_DATA in this path.
 
-### Validation steps
+### Validation
 
-1. Use an eval that returns `status: "MONITORTIMEOUT"` for some responses (e.g. based on response time or payload).
-2. Confirm `monitoring_data` has rows with `status = 'MONITORTIMEOUT'` for that monitor.
-3. Reload the status page: the leaf’s 90-day heatmap should show navy for days that have MONITORTIMEOUT minutes.
-4. Put that monitor in a group; confirm the group’s heatmap and summary show MONITORTIMEOUT (navy) when the leaf is MONITORTIMEOUT.
-5. Confirm DOWN still overrides MONITORTIMEOUT and DEGRADED in aggregation and latest-status.
+1. Ensure eval returns MONITORTIMEOUT for the relevant minutes; confirm `monitoring_data` has `status = 'MONITORTIMEOUT'` for those rows.
+2. Reload the status page: leaf heatmap should show navy for days where the only (or worst) real status is MONITORTIMEOUT.
+3. Check a group/supergroup containing that leaf: their heatmaps should show MONITORTIMEOUT when the leaf is MONITORTIMEOUT and no child is DOWN.
+4. Confirm days that have real DOWN still show DOWN (red).
 
 ### No-breaking-changes
 
-- Only the controller is changed: one reducer (defensive increment) and two priority orders (GetLatestStatusActiveAll and calculateAggregatedStatus).
-- No new statuses, no DB changes, no eval or timeout overrides. Existing status handling and heatmap behavior for other statuses remain the same.
+- Only **GetDataGroupByDayAlternative** (interpolation argument + reducer) and the two priority chains are changed. No new statuses, no schema changes, no eval or timeout overrides. Other callers of InterpolateData and existing status handling are unchanged.
